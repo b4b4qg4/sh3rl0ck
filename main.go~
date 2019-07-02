@@ -1,0 +1,85 @@
+package main
+
+import (
+	"compress/gzip"
+	"net/http"
+	"net/url"
+	"io/ioutil"
+	"crypto/tls"
+	"os"
+	"time"
+	"fmt"
+	"io"
+)
+
+type Client struct {
+	http.Client
+}
+
+func NewClient() (*Client, error) {
+	proxyURL, err := url.Parse("socks5://localhost:9050")
+	if err != nil {
+		return nil, err
+	}
+
+	client := Client{
+		Client: http.Client {
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+			Timeout: 30 * time.Second,
+		},
+	}
+
+	return &Client, nil
+}
+
+func (c *Client) Search() ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, "http://www.amazon.com", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	// req.Header.Set("Content-Type", "")
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var r io.ReadCloser
+	switch resp.Header.Get("Content-Encoding") {
+		case "gzip":
+			r, err = gzip.NewReader(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			defer r.Close()
+		default:
+			r = resp.Body
+	}
+
+	return ioutil.ReadAll(r)
+}
+
+func main() {
+	cl, err := NewClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to intialize client: %v", err)
+		os.Exit(1) 
+	}
+
+	b, err := cl.Search()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to execute request: %v", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(string(b))
+}
